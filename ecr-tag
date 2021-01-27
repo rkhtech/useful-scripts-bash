@@ -1,0 +1,44 @@
+#!/bin/bash
+
+function usage {
+  echo usage: ecr-tag.sh repositoryName oldtag newtag
+  exit 1
+}
+
+if [ $# -ne 3 ]; then
+  usage
+fi
+
+echo -n "searching ECR for $1..."
+REPO_DETAILS=$(aws ecr describe-repositories  --query 'repositories[?repositoryName==`'${1}'`]' | jq '.[0]')
+if [ "$REPO_DETAILS" == "null" ]; then
+  echo "repository not found"
+else
+  echo "repository found"
+  echo $REPO_DETAILS | jq
+fi
+
+echo -n "gathering details about existing image..."
+#REGISTRY_ID=$(echo $REPO_DETAILS | jq '.registryId')
+REGISTRY_NAME="https://$(echo $REPO_DETAILS | jq -r '.repositoryUri' | cut -d'/' -f1)"
+REPOSITORY=$1
+TAG_OLD="$2"
+TAG_NEW="$3"
+CONTENT_TYPE="application/vnd.docker.distribution.manifest.v2+json"
+DOCKER_USER=AWS
+DOCKER_PASS=$(aws ecr get-login-password --region us-west-2)
+echo "done"
+
+echo "fetching image manifest..."
+MANIFEST=$(curl -s -u "$DOCKER_USER:$DOCKER_PASS" -H "Accept: ${CONTENT_TYPE}" "${REGISTRY_NAME}/v2/${REPOSITORY}/manifests/${TAG_OLD}")
+if [ $? -ne 0 ]; then
+  exit
+fi
+echo -n "updating image tag..."
+curl -s -u "$DOCKER_USER:$DOCKER_PASS" -X PUT -H "Content-Type: ${CONTENT_TYPE}" -d "${MANIFEST}" "${REGISTRY_NAME}/v2/${REPOSITORY}/manifests/${TAG_NEW}"
+if [ $? -ne 0 ]; then
+  exit
+fi
+echo "done"
+
+aws ecr describe-images --repository-name $REPOSITORY --image-ids imageTag=$TAG_NEW | jq
